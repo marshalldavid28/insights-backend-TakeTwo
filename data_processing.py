@@ -26,6 +26,7 @@ def find_groupable_column(df):
     preferred_columns = [
         "Creative Name",
         "Creative ID",
+        "Creative",
         "Device Type",
         "Placement",
         "Domain",
