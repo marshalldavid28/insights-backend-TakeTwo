@@ -24,9 +24,9 @@ def standardize_columns(df):
 # --- STEP 3: Find the Best Grouping Column ---
 def find_groupable_column(df):
     preferred_columns = [
+        "Creative",
         "Creative Name",
         "Creative ID",
-        "Creative",
         "Device Type",
         "Placement",
         "Domain",
@@ -37,14 +37,14 @@ def find_groupable_column(df):
         "Insertion Order"
     ]
 
+    # Step 1: Prefer known groupable columns (relax impressions threshold)
     for col in preferred_columns:
         if col in df.columns:
             unique_vals = df[col].nunique()
             if 2 <= unique_vals <= 25:
-                if "Impressions" in df.columns and df.groupby(col)["Impressions"].sum().max() >= 1000:
-                    return col
+                return col
 
-    # Fallback to any other column that looks groupable
+    # Step 2: Fallback to dynamic detection with stricter impression threshold
     for col in df.columns:
         if col in METRIC_COLUMNS:
             continue
@@ -87,13 +87,16 @@ def process_uploaded_file(file):
         if not group_col:
             return None, "No groupable column found"
 
+        print(f"✅ Grouped by: '{group_col}' in file: {file.filename}")  # Debug
+
         summary = summarize_by_group(df, group_col)
 
         return {
             "report_type": group_col.lower().replace(" ", "_"),
             "group_by": group_col,
+            "source_file": file.filename,
             "summary": summary.to_dict(orient="records")
         }, None
 
     except Exception as e:
-        return None, f"Failed to process file: {str(e)}"
+        return None, f"❌ Failed to process file: {str(e)}"
