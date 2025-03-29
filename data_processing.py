@@ -21,16 +21,37 @@ def standardize_columns(df):
     df.rename(columns={k: v for k, v in COLUMN_ALIASES.items()}, inplace=True)
     return df
 
-# --- STEP 3: Find a Groupable Column ---
+# --- STEP 3: Find the Best Grouping Column ---
 def find_groupable_column(df):
+    preferred_columns = [
+        "Creative Name",
+        "Creative ID",
+        "Device Type",
+        "Placement",
+        "Domain",
+        "App",
+        "Country",
+        "Geo",
+        "Line Item",
+        "Insertion Order"
+    ]
+
+    for col in preferred_columns:
+        if col in df.columns:
+            unique_vals = df[col].nunique()
+            if 2 <= unique_vals <= 25:
+                if "Impressions" in df.columns and df.groupby(col)["Impressions"].sum().max() >= 1000:
+                    return col
+
+    # Fallback to any other column that looks groupable
     for col in df.columns:
         if col in METRIC_COLUMNS:
             continue
         unique_vals = df[col].nunique()
         if 2 <= unique_vals <= 25:
-            # Check impressions threshold
             if "Impressions" in df.columns and df.groupby(col)["Impressions"].sum().max() >= 1000:
                 return col
+
     return None
 
 # --- STEP 4: Compute Auto-Metrics Safely ---
