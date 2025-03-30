@@ -1,6 +1,6 @@
 import pandas as pd
 
-# --- STEP 1: Column Aliases ---
+# Aliases to normalize column names
 COLUMN_ALIASES = {
     "Revenue (Adv Currency)": "Spend",
     "Spends": "Spend",
@@ -14,50 +14,31 @@ COLUMN_ALIASES = {
 
 METRIC_COLUMNS = ["Impressions", "Clicks", "Spend", "Conversions"]
 
-PREFERRED_GROUP_COLUMNS = [
-    "creative",
-    "creative name",
-    "creative id",
-    "device type",
-    "placement",
-    "domain",
-    "app",
-    "country",
-    "geo",
-    "line item",
-    "insertion order"
-]
-
-# --- STEP 2: Standardize Column Names ---
 def standardize_columns(df):
     df.columns = [col.strip() for col in df.columns]
     df.rename(columns={k: v for k, v in COLUMN_ALIASES.items()}, inplace=True)
     return df
 
-# --- STEP 3: Smart Group Column Detection (strict order) ---
 def find_groupable_column(df):
-    # Create a lowercase map of actual columns
-    col_map = {col.lower(): col for col in df.columns}
+    preferred_columns = [
+        "Creative", "Creative Name", "Creative ID",
+        "Device Type", "Placement", "Domain", "App",
+        "Country", "Geo", "Line Item", "Insertion Order"
+    ]
+    for col in preferred_columns:
+        if col in df.columns and df[col].nunique() >= 5:
+            return col
+    return None
 
-    for pref in PREFERRED_GROUP_COLUMNS:
-        if pref in col_map:
-            actual_col = col_map[pref]
-            if df[actual_col].nunique() >= 5:
-                return actual_col
-
-    return None  # Nothing useful found
-
-# --- STEP 4: Auto-metric Calculation ---
-def add_autometrics(df):
+def add_metrics(df):
     df["CTR"] = df["Clicks"] / df["Impressions"].replace(0, 1)
     df["CPM"] = df["Spend"] / df["Impressions"].replace(0, 1) * 1000
     df["CPC"] = df["Spend"] / df["Clicks"].replace(0, 1)
     df["Conversion Rate"] = df["Conversions"] / df["Clicks"].replace(0, 1)
     df["Cost per Conversion"] = df["Spend"] / df["Conversions"].replace(0, 1)
-    df["Impact Score"] = df["Spend"] * df["CTR"]
+    df["Impact Score"] = df["CTR"] * df["Spend"]
     return df
 
-# --- STEP 5: Top + Bottom 5 by Impact Score ---
 def summarize_by_group(df, group_col):
     grouped = df.groupby(group_col).agg({
         "Impressions": "sum",
@@ -65,45 +46,33 @@ def summarize_by_group(df, group_col):
         "Spend": "sum",
         "Conversions": "sum"
     }).reset_index()
+    grouped = add_metrics(grouped)
 
-    grouped = add_autometrics(grouped)
-    grouped = grouped[grouped["Impressions"] >= 1000]
+    top_5 = grouped.sort_values("Impact Score", ascending=False).head(5).to_dict(orient="records")
+    bottom_5 = grouped.sort_values("Impact Score", ascending=True).head(5).to_dict(orient="records")
+    summary = grouped.to_dict(orient="records")
 
-    # Top 5 by Spend × CTR
-    top5 = grouped.sort_values("Impact Score", ascending=False).head(5)
+    return top_5, bottom_5, summary
 
-    # Bottom 5 by Spend × CTR (only if spend > 0)
-    bottom5 = grouped[grouped["Spend"] > 0].sort_values("Impact Score", ascending=True).head(5)
-
-    combined = pd.concat([top5, bottom5]).drop_duplicates(subset=[group_col])
-
-    return {
-        "group_by": group_col,
-        "top_5": top5.to_dict(orient="records"),
-        "bottom_5": bottom5.to_dict(orient="records"),
-        "combined": combined.to_dict(orient="records")
-    }
-
-# --- STEP 6: Process Uploaded File ---
-def process_uploaded_file(file):
+def process_uploaded_file(file_obj):
     try:
-        df = pd.read_excel(file.file)
+        df = pd.read_excel(file_obj)
         df = standardize_columns(df)
-
         group_col = find_groupable_column(df)
-        if not group_col:
-            return None, "No suitable group column found in file."
 
-        summary = summarize_by_group(df, group_col)
+        if not group_col:
+            return None, "No groupable column found"
+
+        top_5, bottom_5, summary = summarize_by_group(df, group_col)
+        df_with_metrics = add_metrics(df)
 
         return {
+            "group_by": group_col,
             "report_type": group_col.lower().replace(" ", "_"),
-            "source_file": file.filename,
-            "group_by": summary["group_by"],
-            "top_5": summary["top_5"],
-            "bottom_5": summary["bottom_5"],
-            "summary": summary["combined"]
+            "top_5": top_5,
+            "bottom_5": bottom_5,
+            "summary": summary,
+            "full_data": df_with_metrics.to_dict(orient="records")
         }, None
-
     except Exception as e:
         return None, f"Failed to process file: {str(e)}"
