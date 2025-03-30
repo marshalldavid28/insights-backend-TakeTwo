@@ -23,28 +23,32 @@ def standardize_columns(df):
 
 # --- STEP 3: Find the Best Grouping Column ---
 def find_groupable_column(df):
+    # Normalize column names for safe matching
+    cols = {col.lower().strip(): col for col in df.columns}
+
     preferred_columns = [
-        "Creative",
-        "Creative Name",
-        "Creative ID",
-        "Device Type",
-        "Placement",
-        "Domain",
-        "App",
-        "Country",
-        "Geo",
-        "Line Item",
-        "Insertion Order"
+        "creative",
+        "creative name",
+        "creative id",
+        "device type",
+        "placement",
+        "domain",
+        "app",
+        "country",
+        "geo",
+        "line item",
+        "insertion order"
     ]
 
-    # Step 1: Prefer known groupable columns (relax impressions threshold)
-    for col in preferred_columns:
-        if col in df.columns:
-            unique_vals = df[col].nunique()
+    # Step 1: Prefer known groupable columns
+    for pref in preferred_columns:
+        if pref in cols:
+            actual_col = cols[pref]
+            unique_vals = df[actual_col].nunique()
             if 2 <= unique_vals <= 25:
-                return col
+                return actual_col
 
-    # Step 2: Fallback to dynamic detection with stricter impression threshold
+    # Step 2: Fallback to any column with grouping potential
     for col in df.columns:
         if col in METRIC_COLUMNS:
             continue
