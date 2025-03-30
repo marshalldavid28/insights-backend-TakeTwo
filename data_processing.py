@@ -12,7 +12,6 @@ COLUMN_ALIASES = {
     "Conversions": "Conversions",
 }
 
-# Core metric columns used in calculations
 METRIC_COLUMNS = ["Impressions", "Clicks", "Spend", "Conversions"]
 
 # --- STEP 2: Standardize Column Names ---
@@ -21,9 +20,8 @@ def standardize_columns(df):
     df.rename(columns={k: v for k, v in COLUMN_ALIASES.items()}, inplace=True)
     return df
 
-# --- STEP 3: Find the Best Grouping Column ---
+# --- STEP 3: Grouping Column Detection (≥ 5 unique values) ---
 def find_groupable_column(df):
-    # Normalize column names for safe matching
     cols = {col.lower().strip(): col for col in df.columns}
 
     preferred_columns = [
@@ -40,35 +38,31 @@ def find_groupable_column(df):
         "insertion order"
     ]
 
-    # Step 1: Prefer known groupable columns
     for pref in preferred_columns:
         if pref in cols:
             actual_col = cols[pref]
-            unique_vals = df[actual_col].nunique()
-            if 2 <= unique_vals <= 25:
+            if df[actual_col].nunique() >= 5:
                 return actual_col
 
-    # Step 2: Fallback to any column with grouping potential
     for col in df.columns:
         if col in METRIC_COLUMNS:
             continue
-        unique_vals = df[col].nunique()
-        if 2 <= unique_vals <= 25:
-            if "Impressions" in df.columns and df.groupby(col)["Impressions"].sum().max() >= 1000:
-                return col
+        if df[col].nunique() >= 5:
+            return col
 
     return None
 
-# --- STEP 4: Compute Auto-Metrics Safely ---
+# --- STEP 4: Auto-metric Calculation ---
 def add_autometrics(df):
     df["CTR"] = df["Clicks"] / df["Impressions"].replace(0, 1)
     df["CPM"] = df["Spend"] / df["Impressions"].replace(0, 1) * 1000
     df["CPC"] = df["Spend"] / df["Clicks"].replace(0, 1)
     df["Conversion Rate"] = df["Conversions"] / df["Clicks"].replace(0, 1)
     df["Cost per Conversion"] = df["Spend"] / df["Conversions"].replace(0, 1)
+    df["Impact Score"] = df["Spend"] * df["CTR"]  # Custom ranking logic
     return df
 
-# --- STEP 5: Summarize Data by Group ---
+# --- STEP 5: Top + Bottom 5 by Impact Score ---
 def summarize_by_group(df, group_col):
     grouped = df.groupby(group_col).agg({
         "Impressions": "sum",
@@ -78,10 +72,25 @@ def summarize_by_group(df, group_col):
     }).reset_index()
 
     grouped = add_autometrics(grouped)
-    grouped = grouped.sort_values("Spend", ascending=False).head(5)
-    return grouped
+    grouped = grouped[grouped["Impressions"] >= 1000]
 
-# --- STEP 6: Main Handler for Each Uploaded File ---
+    # Top 5 by Impact (Spend × CTR)
+    top5 = grouped.sort_values("Impact Score", ascending=False).head(5)
+
+    # Bottom 5 by Impact (Spend > 0 + low CTR)
+    bottom5 = grouped[grouped["Spend"] > 0].sort_values("Impact Score", ascending=True).head(5)
+
+    # Combine and remove any duplicates
+    combined = pd.concat([top5, bottom5]).drop_duplicates(subset=[group_col])
+
+    return {
+        "group_by": group_col,
+        "top_5": top5.to_dict(orient="records"),
+        "bottom_5": bottom5.to_dict(orient="records"),
+        "combined": combined.to_dict(orient="records")
+    }
+
+# --- STEP 6: Main Processor ---
 def process_uploaded_file(file):
     try:
         df = pd.read_excel(file.file)
@@ -91,15 +100,17 @@ def process_uploaded_file(file):
         if not group_col:
             return None, "No groupable column found"
 
-        print(f"✅ Grouped by: '{group_col}' in file: {file.filename}")  # Debug
+        print(f"✅ Grouped by: '{group_col}' in file: {file.filename}")
 
         summary = summarize_by_group(df, group_col)
 
         return {
             "report_type": group_col.lower().replace(" ", "_"),
-            "group_by": group_col,
             "source_file": file.filename,
-            "summary": summary.to_dict(orient="records")
+            "group_by": summary["group_by"],
+            "top_5": summary["top_5"],
+            "bottom_5": summary["bottom_5"],
+            "summary": summary["combined"]
         }, None
 
     except Exception as e:
